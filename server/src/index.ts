@@ -10,12 +10,19 @@ const PORT = 3001;
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-app.get("/health", (_req, res) => {
+const handleHealth = (_req: express.Request, res: express.Response) => {
   res.json({ status: "ok", timestamp: Date.now() });
-});
+};
 
+// Mount health check
+app.get("/health", handleHealth);
+app.get("/api/health", handleHealth);
+
+// Mount device & remote routes for direct and /api rewrites
 app.use("/devices", deviceRoutes);
+app.use("/api/devices", deviceRoutes);
 app.use("/remote", remoteRoutes);
+app.use("/api/remote", remoteRoutes);
 
 // Continuous background network scanner (runs on boot and every 25s)
 let scanningInProgress = false;

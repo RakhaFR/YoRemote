@@ -21,8 +21,14 @@ function getDefaultBridgeUrl(): string {
     const stored = localStorage.getItem("yoremote_bridge_url");
     if (stored) return stored;
 
-    const hostname = window.location.hostname || "localhost";
-    return `http://${hostname}:${DEFAULT_PORT}`;
+    const hostname = window.location.hostname;
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `http://localhost:${DEFAULT_PORT}`;
+    }
+    if (/^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(hostname)) {
+      return `http://${hostname}:${DEFAULT_PORT}`;
+    }
+    return `http://localhost:${DEFAULT_PORT}`;
   }
   return `http://localhost:${DEFAULT_PORT}`;
 }
@@ -38,11 +44,13 @@ export function useDevices() {
 
   const setBridgeUrl = (url: string) => {
     let clean = url.trim();
-    if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
-      clean = `http://${clean}`;
+    if (clean === "/api" || clean.startsWith("/api/")) {
+      clean = clean.replace(/\/+$/, "");
+    } else if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+      clean = `http://${clean}`.replace(/\/+$/, "");
+    } else {
+      clean = clean.replace(/\/+$/, "");
     }
-    // remove trailing slash
-    clean = clean.replace(/\/+$/, "");
     localStorage.setItem("yoremote_bridge_url", clean);
     setBridgeUrlState(clean);
   };
