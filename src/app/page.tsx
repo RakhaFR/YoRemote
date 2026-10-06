@@ -10,12 +10,13 @@ import {
   Television,
   Fan,
   Sliders,
+  Check,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
 export default function Home() {
   const { canInstall, isInstalled, install } = useInstallPrompt();
-  const { devices, scanning, scan, serverOnline, latency } = useDevices();
+  const { devices, scanning, scan, serverOnline, latency, bridgeUrl, setBridgeUrl } = useDevices();
   const [tab, setTab] = useState<"devices" | "ac" | "settings">("devices");
 
   return (
@@ -56,6 +57,8 @@ export default function Home() {
             isInstalled={isInstalled}
             serverOnline={serverOnline}
             latency={latency}
+            bridgeUrl={bridgeUrl}
+            onSaveBridgeUrl={setBridgeUrl}
           />
         )}
       </main>
@@ -91,31 +94,87 @@ function SettingsSection({
   isInstalled,
   serverOnline,
   latency,
+  bridgeUrl,
+  onSaveBridgeUrl,
 }: {
   isInstalled: boolean;
   serverOnline: boolean;
   latency: number | null;
+  bridgeUrl: string;
+  onSaveBridgeUrl: (url: string) => void;
 }) {
+  const [urlInput, setUrlInput] = useState(bridgeUrl);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSaveBridgeUrl(urlInput);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div className="space-y-4">
-      <h2 className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400">
-        System Overview
+      <div>
+        <h2 className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400">
+          Bridge Endpoint Configuration
+        </h2>
+        <p className="text-xs text-zinc-500 mt-0.5">
+          Atur IP PC/Laptop lokal yang menjalankan companion server
+        </p>
+      </div>
+
+      <form onSubmit={handleSave} className="p-3.5 rounded-xl bg-zinc-900/50 border border-zinc-800 space-y-3 font-mono text-xs">
+        <div>
+          <label className="text-[11px] text-zinc-400 block mb-1">
+            Bridge Daemon URL
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              placeholder="http://192.168.1.100:3001"
+              className="flex-1 px-3 py-2 rounded-lg bg-black border border-zinc-800 text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 text-xs"
+            />
+            <button
+              type="submit"
+              className="px-3 py-2 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 font-semibold transition-all active:scale-95 text-xs flex items-center gap-1 shrink-0"
+            >
+              {saved ? (
+                <>
+                  <Check size={14} weight="bold" />
+                  <span>Saved</span>
+                </>
+              ) : (
+                <span>Save</span>
+              )}
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] text-zinc-500 leading-relaxed font-sans">
+          Buka terminal di PC lokal, ketik <code className="text-zinc-300 font-mono">ipconfig</code> (Windows) untuk melihat IP WiFi lokalmu.
+        </p>
+      </form>
+
+      <h2 className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400 pt-2">
+        System Telemetry
       </h2>
 
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800/80 font-mono text-xs">
         <div className="flex items-center justify-between p-3">
-          <span className="text-zinc-400">Bridge Address</span>
-          <span className="text-zinc-200 font-semibold">127.0.0.1:3001</span>
+          <span className="text-zinc-400">Active Bridge</span>
+          <span className="text-zinc-200 font-semibold truncate max-w-[180px]">{bridgeUrl}</span>
         </div>
         <div className="flex items-center justify-between p-3">
           <span className="text-zinc-400">Daemon Heartbeat</span>
-          <span className={serverOnline ? "text-emerald-400" : "text-amber-400"}>
-            {serverOnline && latency !== null ? `${latency} ms` : "OFFLINE"}
+          <span className={serverOnline ? "text-emerald-400 font-semibold" : "text-amber-400"}>
+            {serverOnline && latency !== null ? `${latency} ms (LIVE)` : "DISCONNECTED"}
           </span>
         </div>
         <div className="flex items-center justify-between p-3">
-          <span className="text-zinc-400">Display Standalone</span>
-          <span className="text-zinc-300">{isInstalled ? "Yes" : "Browser Tab"}</span>
+          <span className="text-zinc-400">PWA Mode</span>
+          <span className="text-zinc-300">{isInstalled ? "Standalone App" : "Browser Tab"}</span>
         </div>
         <div className="flex items-center justify-between p-3">
           <span className="text-zinc-400">Engine Build</span>

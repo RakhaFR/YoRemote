@@ -1,52 +1,107 @@
-import type { TVProtocol, CommandMap } from "./base.js";
+import type { TVProtocol } from "./base.js";
 import { WebSocket } from "ws";
 
-const KEY_MAP: CommandMap = {
-  POWER: "KEY_POWER",
-  UP: "KEY_UP", DOWN: "KEY_DOWN", LEFT: "KEY_LEFT", RIGHT: "KEY_RIGHT",
-  ENTER: "KEY_ENTER",
-  BACK: "KEY_RETURN", HOME: "KEY_HOME", MENU: "KEY_MENU",
-  VOLUME_UP: "KEY_VOLUMEUP", VOLUME_DOWN: "KEY_VOLUMEDOWN", MUTE: "KEY_MUTE",
-  CHANNEL_UP: "KEY_CHANNELUP", CHANNEL_DOWN: "KEY_CHANNELDOWN", GUIDE: "KEY_GUIDE",
-  PLAY: "KEY_PLAY", PAUSE: "KEY_PAUSE", STOP: "KEY_STOP",
-  REWIND: "KEY_REWIND", FAST_FORWARD: "KEY_FASTFORWARD",
-  INPUT_HDMI1: "KEY_HDMI1", INPUT_HDMI2: "KEY_HDMI2", INPUT_HDMI3: "KEY_HDMI3",
-  INPUT_TV: "KEY_TV", INPUT_AV: "KEY_EXT",
-  NUM_0: "KEY_0", NUM_1: "KEY_1", NUM_2: "KEY_2", NUM_3: "KEY_3", NUM_4: "KEY_4",
-  NUM_5: "KEY_5", NUM_6: "KEY_6", NUM_7: "KEY_7", NUM_8: "KEY_8", NUM_9: "KEY_9",
-  DELETE: "KEY_DELETE",
+const SSAP_COMMANDS: Record<string, { uri: string; payload?: Record<string, unknown> }> = {
+  POWER: { uri: "ssap://system/turnOff" },
+  VOLUME_UP: { uri: "ssap://audio/volumeUp" },
+  VOLUME_DOWN: { uri: "ssap://audio/volumeDown" },
+  MUTE: { uri: "ssap://audio/setMute", payload: { mute: true } },
+  CHANNEL_UP: { uri: "ssap://tv/channelUp" },
+  CHANNEL_DOWN: { uri: "ssap://tv/channelDown" },
+  PLAY: { uri: "ssap://media.controls/play" },
+  PAUSE: { uri: "ssap://media.controls/pause" },
+  STOP: { uri: "ssap://media.controls/stop" },
+  REWIND: { uri: "ssap://media.controls/rewind" },
+  FAST_FORWARD: { uri: "ssap://media.controls/fastForward" },
+  INPUT_HDMI1: { uri: "ssap://tv/switchInput", payload: { inputId: "HDMI_1" } },
+  INPUT_HDMI2: { uri: "ssap://tv/switchInput", payload: { inputId: "HDMI_2" } },
+  INPUT_HDMI3: { uri: "ssap://tv/switchInput", payload: { inputId: "HDMI_3" } },
+  INPUT_TV: { uri: "ssap://tv/switchInput", payload: { inputId: "TV" } },
+  INPUT_AV: { uri: "ssap://tv/switchInput", payload: { inputId: "AV_1" } },
+};
+
+const BUTTON_MAP: Record<string, string> = {
+  UP: "UP",
+  DOWN: "DOWN",
+  LEFT: "LEFT",
+  RIGHT: "RIGHT",
+  ENTER: "ENTER",
+  BACK: "BACK",
+  HOME: "HOME",
+  MENU: "MENU",
+  GUIDE: "GUIDE",
+  RED: "RED",
+  GREEN: "GREEN",
+  YELLOW: "YELLOW",
+  BLUE: "BLUE",
+  NUM_0: "0",
+  NUM_1: "1",
+  NUM_2: "2",
+  NUM_3: "3",
+  NUM_4: "4",
+  NUM_5: "5",
+  NUM_6: "6",
+  NUM_7: "7",
+  NUM_8: "8",
+  NUM_9: "9",
+  DELETE: "BACK",
 };
 
 export class LGWebOSProtocol implements TVProtocol {
   private ws: WebSocket | null = null;
+  private inputWs: WebSocket | null = null;
   private ip = "";
-  private port = 3000;
+  private port = 3001;
+  private clientKey = "";
   private registered = false;
   private msgId = 0;
 
-  async connect(ip: string, port: number): Promise<boolean> {
+  async connect(ip: string, port?: number): Promise<boolean> {
     this.ip = ip;
-    this.port = port;
+    const targetPort = port && port !== 0 ? port : 3001;
 
+    // Try SSL wss (port 3001) first, fallback to ws (port 3000)
+    const candidates = [
+      { url: `wss://${ip}:${targetPort === 3000 ? 3001 : targetPort}`, ssl: true },
+      { url: `ws://${ip}:3000`, ssl: false },
+    ];
+
+    for (const cand of candidates) {
+      try {
+        const ok = await this.tryConnectUrl(cand.url, cand.ssl);
+        if (ok) return true;
+      } catch {
+        // try next
+      }
+    }
+
+    return false;
+  }
+
+  private tryConnectUrl(url: string, ssl: boolean): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        this.ws = new WebSocket(`ws://${ip}:${port}`);
-
-        const timeout = setTimeout(() => {
-          this.ws?.close();
-          resolve(false);
-        }, 5000);
-
-        this.ws.on("open", () => {
-          clearTimeout(timeout);
-          this.register().then((ok) => {
-            this.registered = ok;
-            resolve(ok);
-          });
+        const socket = new WebSocket(url, {
+          rejectUnauthorized: false,
+          handshakeTimeout: 3000,
         });
 
-        this.ws.on("error", () => {
+        const timeout = setTimeout(() => {
+          socket.terminate();
+          resolve(false);
+        }, 4000);
+
+        socket.on("open", async () => {
           clearTimeout(timeout);
+          this.ws = socket;
+          const regOk = await this.register();
+          this.registered = regOk;
+          resolve(regOk);
+        });
+
+        socket.on("error", () => {
+          clearTimeout(timeout);
+          socket.terminate();
           resolve(false);
         });
       } catch {
@@ -55,9 +110,12 @@ export class LGWebOSProtocol implements TVProtocol {
     });
   }
 
-  private async register(): Promise<boolean> {
+  private register(): Promise<boolean> {
     return new Promise((resolve) => {
-      if (!this.ws) { resolve(false); return; }
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        resolve(false);
+        return;
+      }
 
       const payload = {
         type: "register",
@@ -65,10 +123,38 @@ export class LGWebOSProtocol implements TVProtocol {
         payload: {
           forcePairing: false,
           pairingType: "PROMPT",
-          "client-key": "",
+          "client-key": this.clientKey || undefined,
           manifest: {
-            appVersion: "1.0",
-            signed: {},
+            manifestVersion: 1,
+            appVersion: "1.1",
+            signed: {
+              created: "20140509",
+              appId: "com.yoremote.app",
+              vendorId: "com.yoremote",
+              localizedAppNames: {
+                "": "YoRemote Universal Controller",
+              },
+              permissions: [
+                "TEST_OPEN",
+                "TEST_PROTECTED",
+                "CONTROL_AUDIO",
+                "CONTROL_DISPLAY",
+                "CONTROL_INPUT_JOYSTICK",
+                "CONTROL_INPUT_MEDIA_RECORDING",
+                "CONTROL_INPUT_MEDIA_PLAYBACK",
+                "CONTROL_INPUT_TV",
+                "READ_APP_STATUS",
+                "READ_CURRENT_CHANNEL",
+                "READ_INPUT_DEVICE_LIST",
+                "READ_NETWORK_STATUS",
+                "READ_RUNNING_APPS",
+                "READ_TV_CHANNEL_LIST",
+                "WRITE_NOTIFICATION_TOAST",
+                "READ_POWER_STATE",
+                "READ_COUNTRY_INFO",
+              ],
+              serial: "2f930e2d2cdc084e3fcf82c4f310bbd6",
+            },
           },
         },
       };
@@ -77,13 +163,18 @@ export class LGWebOSProtocol implements TVProtocol {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.type === "registered") {
+            if (msg.payload?.["client-key"]) {
+              this.clientKey = msg.payload["client-key"];
+            }
             this.ws?.off("message", handler);
             resolve(true);
           } else if (msg.type === "error") {
             this.ws?.off("message", handler);
             resolve(false);
           }
-        } catch { /* ignore parse errors */ }
+        } catch {
+          // ignore json errors
+        }
       };
 
       this.ws.on("message", handler);
@@ -92,48 +183,69 @@ export class LGWebOSProtocol implements TVProtocol {
       setTimeout(() => {
         this.ws?.off("message", handler);
         resolve(true);
-      }, 10000);
+      }, 8000);
     });
   }
 
   async sendKey(key: string): Promise<boolean> {
-    const mapped = KEY_MAP[key] ?? key;
-
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       const reconnected = await this.connect(this.ip, this.port);
       if (!reconnected) return false;
     }
 
-    if (key === "POWER") {
-      return this.sendRequest("ssap://system/turnOff", {});
+    // Check if it has direct SSAP URI (Audio, SwitchInput, Media, Power)
+    const ssap = SSAP_COMMANDS[key];
+    if (ssap) {
+      return this.sendRequest(ssap.uri, ssap.payload || {});
     }
 
-    return this.sendButton(mapped);
+    // Otherwise send as button click via pointer input socket
+    const btn = BUTTON_MAP[key] || key;
+    return this.sendButton(btn);
   }
 
   private async sendButton(button: string): Promise<boolean> {
+    if (this.inputWs && this.inputWs.readyState === WebSocket.OPEN) {
+      try {
+        this.inputWs.send(`type:button\nname:${button}\n\n`);
+        return true;
+      } catch {
+        this.inputWs = null;
+      }
+    }
+
     const payload = {
       type: "request",
-      id: `btn_${++this.msgId}`,
+      id: `btn_req_${++this.msgId}`,
       uri: "ssap://com.webos.service.networkinput/getPointerInputSocket",
     };
 
     return new Promise((resolve) => {
-      if (!this.ws) { resolve(false); return; }
+      if (!this.ws) {
+        resolve(false);
+        return;
+      }
 
       const handler = (data: Buffer | string) => {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.id === payload.id && msg.payload?.socketPath) {
             this.ws?.off("message", handler);
-            const inputWs = new WebSocket(msg.payload.socketPath);
-            inputWs.on("open", () => {
-              inputWs.send(`type:button\nname:${button}\n\n`);
-              setTimeout(() => { inputWs.close(); resolve(true); }, 100);
+            const inputSocket = new WebSocket(msg.payload.socketPath, {
+              rejectUnauthorized: false,
             });
-            inputWs.on("error", () => resolve(false));
+
+            inputSocket.on("open", () => {
+              this.inputWs = inputSocket;
+              inputSocket.send(`type:button\nname:${button}\n\n`);
+              resolve(true);
+            });
+
+            inputSocket.on("error", () => resolve(false));
           }
-        } catch { /* ignore */ }
+        } catch {
+          // ignore
+        }
       };
 
       this.ws.on("message", handler);
@@ -146,9 +258,12 @@ export class LGWebOSProtocol implements TVProtocol {
     });
   }
 
-  private async sendRequest(uri: string, payload: Record<string, unknown>): Promise<boolean> {
+  private sendRequest(uri: string, payload: Record<string, unknown>): Promise<boolean> {
     return new Promise((resolve) => {
-      if (!this.ws) { resolve(false); return; }
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        resolve(false);
+        return;
+      }
 
       const msg = {
         type: "request",
@@ -163,7 +278,9 @@ export class LGWebOSProtocol implements TVProtocol {
   }
 
   async disconnect(): Promise<void> {
-    this.ws?.close();
+    this.inputWs?.terminate();
+    this.inputWs = null;
+    this.ws?.terminate();
     this.ws = null;
     this.registered = false;
   }

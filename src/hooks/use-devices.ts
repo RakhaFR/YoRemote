@@ -14,9 +14,21 @@ export interface TVDevice {
   signalStrength?: number;
 }
 
-const API_BASE = "http://localhost:3001";
+const DEFAULT_PORT = "3001";
+
+function getDefaultBridgeUrl(): string {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("yoremote_bridge_url");
+    if (stored) return stored;
+
+    const hostname = window.location.hostname || "localhost";
+    return `http://${hostname}:${DEFAULT_PORT}`;
+  }
+  return `http://localhost:${DEFAULT_PORT}`;
+}
 
 export function useDevices() {
+  const [bridgeUrl, setBridgeUrlState] = useState<string>(getDefaultBridgeUrl);
   const [devices, setDevices] = useState<TVDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [serverOnline, setServerOnline] = useState(false);
@@ -24,10 +36,21 @@ export function useDevices() {
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const setBridgeUrl = (url: string) => {
+    let clean = url.trim();
+    if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+      clean = `http://${clean}`;
+    }
+    // remove trailing slash
+    clean = clean.replace(/\/+$/, "");
+    localStorage.setItem("yoremote_bridge_url", clean);
+    setBridgeUrlState(clean);
+  };
+
   const checkServer = useCallback(async () => {
     const startTime = performance.now();
     try {
-      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(2000) });
       const elapsed = Math.round(performance.now() - startTime);
       const online = res.ok;
       setServerOnline(online);
@@ -40,49 +63,58 @@ export function useDevices() {
       setLastChecked(new Date());
       return false;
     }
-  }, []);
+  }, [bridgeUrl]);
 
   const fetchDevices = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/devices`);
+      const res = await fetch(`${bridgeUrl}/devices`);
       if (res.ok) {
         const data = await res.json();
         setDevices(data);
       }
-    } catch { /* server offline */ }
-  }, []);
+    } catch {
+      // server offline
+    }
+  }, [bridgeUrl]);
 
   const scan = useCallback(async () => {
     setScanning(true);
     try {
-      const res = await fetch(`${API_BASE}/devices/scan`, { method: "POST" });
+      const res = await fetch(`${bridgeUrl}/devices/scan`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setDevices(data);
       }
-    } catch { /* server offline */ }
-    setScanning(false);
-  }, []);
-
-  const sendCommand = useCallback(async (deviceId: string, command: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/remote/${deviceId}/command`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command }),
-      });
-      return res.ok;
     } catch {
-      return false;
+      // server offline
     }
-  }, []);
+    setScanning(false);
+  }, [bridgeUrl]);
+
+  const sendCommand = useCallback(
+    async (deviceId: string, command: string) => {
+      try {
+        const res = await fetch(`${bridgeUrl}/remote/${deviceId}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    [bridgeUrl]
+  );
 
   useEffect(() => {
     let mounted = true;
 
     const poll = async () => {
       const online = await checkServer();
-      if (online && mounted) await fetchDevices();
+      if (online && mounted) {
+        await fetchDevices();
+      }
     };
 
     poll();
@@ -97,5 +129,15 @@ export function useDevices() {
     };
   }, [checkServer, fetchDevices]);
 
-  return { devices, scanning, scan, sendCommand, serverOnline, latency, lastChecked };
+  return {
+    devices,
+    scanning,
+    scan,
+    sendCommand,
+    serverOnline,
+    latency,
+    lastChecked,
+    bridgeUrl,
+    setBridgeUrl,
+  };
 }
