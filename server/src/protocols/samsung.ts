@@ -85,7 +85,7 @@ export class SamsungProtocol implements TVProtocol {
           resolve(true);
         });
 
-        socket.on("message", (data) => {
+        socket.on("message", (data: Buffer | string) => {
           try {
             const msg = JSON.parse(data.toString());
             if (msg.event === "ms.channel.connect" && msg.data?.token) {
