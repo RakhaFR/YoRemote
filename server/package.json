@@ -1,0 +1,23 @@
+{
+  "name": "yoremote-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5",
+    "@types/node": "^20",
+    "@types/ws": "^8",
+    "tsx": "^4.19.0",
+    "typescript": "^5"
+  }
+}
